@@ -25,7 +25,7 @@ CONFIGS = {
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("🛒 Каталог", callback_data="catalog")]]
-    await update.message.reply_text("👋 Магазин работает 24/7. Выбери действие:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("👋 Бот работает 24/7. Выбери действие:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -44,29 +44,32 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text(f"✅ *Покупка (тест)*\nТовар: {item['name']}\nКлюч: `{item['key']}`", parse_mode="Markdown")
     await query.message.reply_text(item['text'])
 
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (ЧТОБЫ RENDER НЕ ЗАКРЫВАЛ БОТА) ---
+# --- НОВЫЙ СПОСОБ ЗАПУСКА (В ОДНОМ ПОТОКЕ) ---
 flask_app = Flask(__name__)
 
 @flask_app.route("/")
 def health():
     return "Bot is running"
 
-# --- ПРАВИЛЬНЫЙ ЗАПУСК БОТА ---
-if __name__ == "__main__":
-    # Создаем приложение
+async def main():
+    # Создаем бота
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(catalog, pattern="^catalog$"))
     app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
     
-    # Запускаем бота в фоне через отдельный поток с правильным event loop
-    def run_bot():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(app.run_polling())
-        
-    import threading
-    threading.Thread(target=run_bot, daemon=True).start()
+    # Запускаем бота
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
     
-    # Запускаем веб-сервер (Render требует, чтобы приложение слушало порт)
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    # Запускаем веб-сервер для Render в отдельном потоке (это безопасно, Flask простой)
+    import threading
+    port = int(os.environ.get("PORT", 8080))
+    threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=port), daemon=True).start()
+    
+    # Держим бота запущенным
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    asyncio.run(main())
