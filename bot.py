@@ -1,5 +1,6 @@
 import os
 import asyncio
+import random
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -10,19 +11,22 @@ from telegram.ext import (
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 
-# --- ВРЕМЕННАЯ ПАМЯТЬ (РАБОТАЕТ МГНОВЕННО) ---
+# --- ВРЕМЕННАЯ ПАМЯТЬ ---
 PRODUCTS = {}
 PROMOS = {}
 REVIEWS = []
+USERS = set() # Храним всех, кто нажал /start
+USER_PURCHASES = {} # Сколько купил каждый
 next_id = 1
-user_promo = {} # Для хранения скидки пользователя
+user_promo = {}
 
 def get_main_menu(is_admin=False):
     keyboard = [
         [InlineKeyboardButton("🛒 Каталог", callback_data="catalog")],
+        [InlineKeyboardButton("👤 Мой профиль", callback_data="profile")],
         [InlineKeyboardButton("🎟 Ввести промокод", callback_data="promo")],
-        [InlineKeyboardButton("💬 Оставить отзыв", callback_data="leave_review")],
-        [InlineKeyboardButton("⭐ Посмотреть отзывы", callback_data="view_reviews")]
+        [InlineKeyboardButton("💬 Оставить отзыв", callback_data="leave_review"), InlineKeyboardButton("⭐ Отзывы", callback_data="view_reviews")],
+        [InlineKeyboardButton("🛡 Поддержка", url=f"tg://user?id={ADMIN_ID}")]
     ]
     if is_admin:
         keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
@@ -33,7 +37,37 @@ def get_back_menu():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['state'] = None
-    await update.message.reply_text("👋 Добро пожаловать в магазин!", reply_markup=get_main_menu(update.effective_user.id == ADMIN_ID))
+    user_id = update.effective_user.id
+    USERS.add(user_id) # Запоминаем пользователя для рассылки
+    await update.message.reply_text("👋 Добро пожаловать в магазин!", reply_markup=get_main_menu(user_id == ADMIN_ID))
+
+# --- СЕКРЕТНАЯ КОМАНДА ---
+async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in user_promo:
+        await update.message.reply_text("Ты уже использовал удачу!")
+        return
+    
+    discount = random.choice([1, 5, 10])
+    user_promo[user_id] = discount
+    await update.message.reply_text(f"🎲 Тебе выпала скидка *{discount}%*! Она автоматически применится при покупке.", parse_mode="Markdown")
+
+# --- ПРОФИЛЬ ---
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+    user_id = query.from_user.id
+    discount = user_promo.get(user_id, 0)
+    purchases = USER_PURCHASES.get(user_id, 0)
+    
+    text = (
+        f"👤 *Твой профиль*\n\n"
+        f"🆔 ID: `{user_id}`\n"
+        f"🎁 Скидка: *{discount}%*\n"
+        f"🛍 Покупок: *{purchases}*"
+    )
+    await query.message.reply_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
 # --- АДМИНКА ---
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -46,19 +80,23 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("➕ Добавить товар", callback_data="admin_add")],
         [InlineKeyboardButton("🗑 Удалить товар", callback_data="admin_delete")],
         [InlineKeyboardButton("🎟 Создать промокод", callback_data="admin_promo")],
+        [InlineKeyboardButton("📢 Сделать рассылку", callback_data="admin_broadcast")],
         [InlineKeyboardButton("⬅️ В меню", callback_data="back_menu")]
     ]
-    await query.message.edit_text("⚙️ Админ-панель. Выбери действие:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.message.delete()
+    await query.message.reply_text("⚙️ Админ-панель. Выбери действие:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.delete()
     await query.message.reply_text("Введи данные товара в формате:\n`Название | Цена | Описание | Код | Ключ`", parse_mode="Markdown", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_product'
 
 async def admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.delete()
     if not PRODUCTS:
         await query.message.reply_text("Каталог пуст.", reply_markup=get_back_menu())
         return
@@ -71,25 +109,36 @@ async def admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.delete()
     await query.message.reply_text("Введи промокод и скидку в % через пробел (например: `NUAR50 50`):", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_promo'
+
+async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+    await query.message.reply_text("Отправь сообщение, которое получат ВСЕ пользователи бота:", reply_markup=get_back_menu())
+    context.user_data['state'] = 'awaiting_broadcast'
 
 # --- КЛИЕНТСКИЕ КНОПКИ ---
 async def promo_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.delete()
     await query.message.reply_text("Отправь мне промокод:", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_promo_code'
 
 async def leave_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.delete()
     await query.message.reply_text("Напиши свой отзыв:", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_review'
 
 async def view_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.delete()
     if not REVIEWS:
         await query.message.reply_text("Пока нет отзывов.", reply_markup=get_back_menu())
         return
@@ -103,8 +152,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
     
-    if not state:
-        return
+    if not state: return
 
     if state == 'awaiting_product' and user_id == ADMIN_ID:
         try:
@@ -140,6 +188,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Ошибка. Пример: `NUAR50 50`", reply_markup=get_back_menu())
         context.user_data['state'] = None
 
+    elif state == 'awaiting_broadcast' and user_id == ADMIN_ID:
+        success = 0
+        for uid in USERS:
+            try:
+                await context.bot.send_message(chat_id=uid, text=f"📢 <b>Сообщение от админа:</b>\n\n{text}", parse_mode="HTML")
+                success += 1
+            except:
+                pass
+        await update.message.reply_text(f"✅ Рассылка завершена! Доставлено: {success} чел.", reply_markup=get_back_menu())
+        context.user_data['state'] = None
+
     elif state == 'awaiting_promo_code':
         code = text.upper()
         if code in PROMOS:
@@ -158,6 +217,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.delete()
     if not PRODUCTS:
         await query.message.reply_text("Каталог пуст.", reply_markup=get_back_menu())
         return
@@ -170,7 +230,8 @@ async def back_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['state'] = None
-    await query.message.edit_text("👋 Главное меню:", reply_markup=get_main_menu(query.from_user.id == ADMIN_ID))
+    await query.message.delete()
+    await query.message.reply_text("👋 Главное меню:", reply_markup=get_main_menu(query.from_user.id == ADMIN_ID))
 
 # --- ЗАПУСК ---
 flask_app = Flask(__name__)
@@ -181,10 +242,13 @@ def health(): return "Bot is running"
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("roll", roll)) # Пасхалка
+    app.add_handler(CallbackQueryHandler(profile, pattern="^profile$"))
     app.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin_panel$"))
     app.add_handler(CallbackQueryHandler(admin_add, pattern="^admin_add$"))
     app.add_handler(CallbackQueryHandler(admin_delete, pattern="^admin_delete$"))
     app.add_handler(CallbackQueryHandler(admin_promo, pattern="^admin_promo$"))
+    app.add_handler(CallbackQueryHandler(admin_broadcast, pattern="^admin_broadcast$"))
     app.add_handler(CallbackQueryHandler(promo_menu, pattern="^promo$"))
     app.add_handler(CallbackQueryHandler(leave_review, pattern="^leave_review$"))
     app.add_handler(CallbackQueryHandler(view_reviews, pattern="^view_reviews$"))
