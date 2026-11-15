@@ -58,14 +58,14 @@ def get_main_menu(user_id):
 def get_back_menu():
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В главное меню", callback_data="back_menu")]])
 
-# --- ПРОСТОЙ И ПЛАВНЫЙ ПЕРЕХОД (УДАЛЕНИЕ + ПАУЗА) ---
+# --- ТА САМАЯ ЗАДЕРЖКА 0.5 СЕКУНДЫ ---
 async def smooth_transition(query, text, reply_markup=None, parse_mode=None):
     try:
         await query.message.delete()
     except:
         pass
     
-    await asyncio.sleep(1.5) # Та самая пауза, чтобы не резало глаз
+    await asyncio.sleep(0.5) # Твоя любимая задержка
     
     await query.message.chat.send_message(
         text=text, 
@@ -190,7 +190,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try: await query.message.delete()
     except: pass
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(0.5)
     
     await context.bot.send_invoice(
         chat_id=query.message.chat_id,
@@ -346,7 +346,7 @@ async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try: await query.message.delete()
     except: pass
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(0.5) # Задержка для каталога тоже 0.5
     
     if not PRODUCTS:
         await query.message.chat.send_message("Каталог пуст.", reply_markup=get_back_menu())
