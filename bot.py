@@ -58,18 +58,33 @@ def get_main_menu(user_id):
 def get_back_menu():
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В главное меню", callback_data="back_menu")]])
 
-# --- ФУНКЦИЯ ЧИСТОГО УДАЛЕНИЯ (ЭФФЕКТ МОРГАНИЯ) ---
-async def clear_transition(query, text, reply_markup=None, parse_mode=None):
-    # 1. Сразу удаляем старое сообщение
+# --- ЭФФЕКТ "РАСТВОРЕНИЯ" ---
+async def dissolve_transition(query, text, reply_markup=None, parse_mode=None):
+    # 1. Убираем кнопки, чтобы нельзя было нажать дважды
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except: pass
+    
+    # 2. Постепенно стираем текст (эффект затухания)
+    # Берем текущий текст и стираем по 5 символов
+    current_text = query.message.text or ""
+    if current_text:
+        for i in range(len(current_text), 0, -5):
+            try:
+                await query.message.edit_text(text=current_text[:i])
+                await asyncio.sleep(0.02) # Скорость стирания
+            except:
+                break
+    
+    # 3. Удаляем пустое сообщение
     try:
         await query.message.delete()
-    except:
-        pass
+    except: pass
     
-    # 2. Ждем 0.4 секунды (чтобы глаз заметил пустоту)
-    await asyncio.sleep(0.4)
+    # 4. Пауза (1 секунда, как ты просил)
+    await asyncio.sleep(1.0)
     
-    # 3. Отправляем новое
+    # 5. Отправляем новое сообщение
     await query.message.chat.send_message(
         text=text, 
         reply_markup=reply_markup, 
@@ -94,15 +109,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def roll_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.delete()
-    await asyncio.sleep(0.4)
+    # Эффект для рулетки (быстрое мигание цифр)
+    await query.message.edit_text("🎰 3...")
+    await asyncio.sleep(0.2)
+    await query.message.edit_text("🎰 2...")
+    await asyncio.sleep(0.2)
+    await query.message.edit_text("🎰 1...")
+    await asyncio.sleep(0.2)
     
     user_id = query.from_user.id
     u = get_user(user_id)
     now = time.time()
     
     if now - u["last_roll"] < 86400:
-        await query.message.chat.send_message("⏳ Ты уже крутил сегодня. Приходи завтра!", reply_markup=get_back_menu())
+        await dissolve_transition(query, "⏳ Ты уже крутил сегодня. Приходи завтра!", get_back_menu())
         return
         
     u["last_roll"] = now
@@ -117,7 +137,7 @@ async def roll_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u["exp"] += amount
         text = f"🎉 Ты выиграл *{amount} EXP*!"
         
-    await query.message.chat.send_message(text, parse_mode="Markdown", reply_markup=get_back_menu())
+    await dissolve_transition(query, text, get_back_menu(), "Markdown")
 
 async def ref_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -131,7 +151,7 @@ async def ref_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Твоя ссылка:\n`{link}`\n\n"
         f"За каждого приведенного друга ты получаешь +100 EXP."
     )
-    await clear_transition(query, text, get_back_menu(), "Markdown")
+    await dissolve_transition(query, text, get_back_menu(), "Markdown")
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -151,28 +171,28 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🛍 Покупок: *{u['purchases']}*\n"
         f"✨ EXP: *{u['exp']}*"
     )
-    await clear_transition(query, text, get_back_menu(), "Markdown")
+    await dissolve_transition(query, text, get_back_menu(), "Markdown")
 
 async def promo_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await clear_transition(query, "Отправь мне промокод:", get_back_menu())
+    await dissolve_transition(query, "Отправь мне промокод:", get_back_menu())
     context.user_data['state'] = 'awaiting_promo_code'
 
 async def leave_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await clear_transition(query, "Напиши свой отзыв:", get_back_menu())
+    await dissolve_transition(query, "Напиши свой отзыв:", get_back_menu())
     context.user_data['state'] = 'awaiting_review'
 
 async def view_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not REVIEWS:
-        await clear_transition(query, "Пока нет отзывов.", get_back_menu())
+        await dissolve_transition(query, "Пока нет отзывов.", get_back_menu())
         return
     text = "⭐ *Последние отзывы:*\n\n" + "\n\n".join([f"• {r}" for r in REVIEWS[-5:]])
-    await clear_transition(query, text, get_back_menu(), "Markdown")
+    await dissolve_transition(query, text, get_back_menu(), "Markdown")
 
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -193,8 +213,12 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     price = int(item['price'])
     price_after_discount = price - (price * total_discount // 100)
     
-    await query.message.delete() # Удаляем кнопку "Купить"
-    await asyncio.sleep(0.3)
+    # Плавное удаление перед отправкой счета
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+        await query.message.delete()
+    except: pass
+    await asyncio.sleep(0.5)
     
     await context.bot.send_invoice(
         chat_id=query.message.chat_id,
@@ -241,7 +265,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_users = len(USERS)
     total_purchases = sum(u["purchases"] for u in USERS.values())
     text = f"📊 *Статистика*\n\n👥 Юзеров: *{total_users}*\n🛍 Покупок: *{total_purchases}*"
-    await clear_transition(query, text, get_back_menu(), "Markdown")
+    await dissolve_transition(query, text, get_back_menu(), "Markdown")
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -257,35 +281,35 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast")],
         [InlineKeyboardButton("⬅️ В меню", callback_data="back_menu")]
     ]
-    await clear_transition(query, "⚙️ Админ-панель:", InlineKeyboardMarkup(keyboard))
+    await dissolve_transition(query, "⚙️ Админ-панель:", InlineKeyboardMarkup(keyboard))
 
 async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await clear_transition(query, "Введи: `Название | Цена(число) | Описание | Код | Ключ`", get_back_menu(), "Markdown")
+    await dissolve_transition(query, "Введи: `Название | Цена(число) | Описание | Код | Ключ`", get_back_menu(), "Markdown")
     context.user_data['state'] = 'awaiting_product'
 
 async def admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not PRODUCTS:
-        await clear_transition(query, "Каталог пуст.", get_back_menu())
+        await dissolve_transition(query, "Каталог пуст.", get_back_menu())
         return
     text = "Введи ID для удаления:\n\n"
     for k, v in PRODUCTS.items(): text += f"ID: {k} — {v['name']}\n"
-    await clear_transition(query, text, get_back_menu())
+    await dissolve_transition(query, text, get_back_menu())
     context.user_data['state'] = 'awaiting_delete_id'
 
 async def admin_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await clear_transition(query, "Введи промокод и скидку (например: `NUAR50 50`):", get_back_menu())
+    await dissolve_transition(query, "Введи промокод и скидку (например: `NUAR50 50`):", get_back_menu())
     context.user_data['state'] = 'awaiting_promo'
 
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await clear_transition(query, "Отправь сообщение для всех:", get_back_menu())
+    await dissolve_transition(query, "Отправь сообщение для всех:", get_back_menu())
     context.user_data['state'] = 'awaiting_broadcast'
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -348,11 +372,17 @@ async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # Удаляем меню
+    # Эффект стирания для каталога
     try:
+        await query.message.edit_reply_markup(reply_markup=None)
+        current_text = query.message.text or ""
+        for i in range(len(current_text), 0, -10):
+            await query.message.edit_text(text=current_text[:i])
+            await asyncio.sleep(0.01)
         await query.message.delete()
     except: pass
-    await asyncio.sleep(0.4) # Пауза
+    
+    await asyncio.sleep(1.0) # Пауза 1 сек
     
     if not PRODUCTS:
         await query.message.chat.send_message("Каталог пуст.", reply_markup=get_back_menu())
@@ -368,7 +398,7 @@ async def back_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['state'] = None
-    await clear_transition(query, "👋 Главное меню:", get_main_menu(query.from_user.id))
+    await dissolve_transition(query, "👋 Главное меню:", get_main_menu(query.from_user.id))
 
 flask_app = Flask(__name__)
 
