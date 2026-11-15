@@ -62,15 +62,19 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"👤 *Твой профиль*\n\n🆔 ID: `{user_id}`\n🎁 Скидка: *{discount}%*\n🛍 Покупок: *{purchases}*"
     await query.message.reply_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- СОЗДАНИЕ СЧЕТА ---
+# --- СОЗДАНИЕ СЧЕТА (В РУБЛЯХ) ---
 async def create_crypto_invoice(item, discount=0):
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
     final_price = int(item['price']) - (int(item['price']) * discount // 100)
+    
+    # ВАЛЮТА ИЗМЕНЕНА НА РУБЛИ
     payload = {
-        "asset": "USDT",
+        "currency_type": "fiat",
+        "fiat": "RUB",
         "amount": str(final_price),
         "description": f"Покупка: {item['name']}"
     }
+    
     async with aiohttp.ClientSession() as session:
         async with session.post(f"{API_URL}createInvoice", json=payload, headers=headers) as resp:
             data = await resp.json()
@@ -78,7 +82,7 @@ async def create_crypto_invoice(item, discount=0):
                 return data["result"]["bot_invoice_url"], final_price, data["result"]["invoice_id"]
     return None, final_price, None
 
-# --- ПРОВЕРКА ОПЛАТЫ (АВТОВЫДАЧА) ---
+# --- ПРОВЕРКА ОПЛАТЫ ---
 async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -99,7 +103,6 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if data.get("ok"):
                 invoice = data["result"]["items"][0]
                 if invoice["status"] == "paid":
-                    # Успешная оплата!
                     user_id = query.from_user.id
                     USER_PURCHASES[user_id] = USER_PURCHASES.get(user_id, 0) + 1
                     
