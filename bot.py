@@ -55,7 +55,6 @@ def get_main_menu(user_id):
         keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(keyboard)
 
-# Универсальная кнопка назад (в главное меню)
 def get_back_menu():
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В главное меню", callback_data="back_menu")]])
 
@@ -77,10 +76,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def roll_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.edit_text("🎰 Крутим рулетку...")
+    await asyncio.sleep(0.8) # Анимация прокрутки
+    
     user_id = query.from_user.id
     u = get_user(user_id)
-    
     now = time.time()
+    
     if now - u["last_roll"] < 86400:
         await query.message.edit_text("⏳ Ты уже крутил сегодня. Приходи завтра!", reply_markup=get_back_menu())
         return
@@ -102,6 +104,9 @@ async def roll_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ref_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.edit_text("⏳ Загрузка...")
+    await asyncio.sleep(0.3)
+    
     user_id = query.from_user.id
     bot_info = await context.bot.get_me()
     link = f"https://t.me/{bot_info.username}?start={user_id}"
@@ -116,6 +121,9 @@ async def ref_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.edit_text("⏳ Загрузка...")
+    await asyncio.sleep(0.3)
+    
     user_id = query.from_user.id
     u = get_user(user_id)
     level_name, level_discount = get_level(u["exp"])
@@ -133,7 +141,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await query.message.edit_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- ПРОМОКОДЫ И ОТЗЫВЫ ---
 async def promo_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -149,16 +156,20 @@ async def leave_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def view_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.edit_text("⏳ Загрузка...")
+    await asyncio.sleep(0.3)
+    
     if not REVIEWS:
         await query.message.edit_text("Пока нет отзывов.", reply_markup=get_back_menu())
         return
     text = "⭐ *Последние отзывы:*\n\n" + "\n\n".join([f"• {r}" for r in REVIEWS[-5:]])
     await query.message.edit_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- ОПЛАТА ---
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.edit_text("⏳ Создаю счет...")
+    await asyncio.sleep(0.4)
     
     config_key = int(query.data.replace("buy_", ""))
     item = PRODUCTS.get(config_key)
@@ -214,10 +225,12 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(item['text'])
     await update.message.reply_text("Что-нибудь еще?", reply_markup=get_back_menu())
 
-# --- АДМИНКА ---
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.edit_text("⏳ Считаю статистику...")
+    await asyncio.sleep(0.3)
+    
     total_users = len(USERS)
     total_purchases = sum(u["purchases"] for u in USERS.values())
     text = f"📊 *Статистика*\n\n👥 Юзеров: *{total_users}*\n🛍 Покупок: *{total_purchases}*"
@@ -228,6 +241,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     context.user_data['state'] = None
     if query.from_user.id != ADMIN_ID: return
+    await query.message.edit_text("⏳ Загрузка...")
+    await asyncio.sleep(0.3)
+    
     keyboard = [
         [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("➕ Добавить товар", callback_data="admin_add")],
@@ -326,10 +342,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await query.message.edit_text("⏳ Загружаю каталог...")
+    await asyncio.sleep(0.4)
+    
     if not PRODUCTS:
         await query.message.edit_text("Каталог пуст.", reply_markup=get_back_menu())
         return
-    # Отправляем товары с кнопкой "Назад" под каждым
     for k, v in PRODUCTS.items():
         keyboard = [
             [InlineKeyboardButton("💳 Купить", callback_data=f"buy_{k}")],
@@ -341,13 +359,14 @@ async def back_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['state'] = None
-    # Если нельзя изменить сообщение (например, это фото), отправляем новое
+    await query.message.edit_text("⏳ Загрузка...")
+    await asyncio.sleep(0.3)
+    
     try:
         await query.message.edit_text("👋 Главное меню:", reply_markup=get_main_menu(query.from_user.id))
     except:
         await query.message.reply_text("👋 Главное меню:", reply_markup=get_main_menu(query.from_user.id))
 
-# --- ЗАПУСК ---
 flask_app = Flask(__name__)
 
 @flask_app.route("/")
