@@ -55,8 +55,9 @@ def get_main_menu(user_id):
         keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(keyboard)
 
+# Универсальная кнопка назад (в главное меню)
 def get_back_menu():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="back_menu")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В главное меню", callback_data="back_menu")]])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['state'] = None
@@ -132,17 +133,17 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await query.message.edit_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- ПРОМОКОДЫ И ОТЗЫВЫ (КЛИЕНТ) ---
+# --- ПРОМОКОДЫ И ОТЗЫВЫ ---
 async def promo_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.edit_text("Отправь мне промокод:")
+    await query.message.edit_text("Отправь мне промокод:", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_promo_code'
 
 async def leave_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.edit_text("Напиши свой отзыв:")
+    await query.message.edit_text("Напиши свой отзыв:", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_review'
 
 async def view_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -240,30 +241,30 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.edit_text("Введи: `Название | Цена(число) | Описание | Код | Ключ`", parse_mode="Markdown")
+    await query.message.edit_text("Введи: `Название | Цена(число) | Описание | Код | Ключ`", parse_mode="Markdown", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_product'
 
 async def admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not PRODUCTS:
-        await query.message.edit_text("Каталог пуст.")
+        await query.message.edit_text("Каталог пуст.", reply_markup=get_back_menu())
         return
     text = "Введи ID для удаления:\n\n"
     for k, v in PRODUCTS.items(): text += f"ID: {k} — {v['name']}\n"
-    await query.message.edit_text(text)
+    await query.message.edit_text(text, reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_delete_id'
 
 async def admin_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.edit_text("Введи промокод и скидку (например: `NUAR50 50`):")
+    await query.message.edit_text("Введи промокод и скидку (например: `NUAR50 50`):", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_promo'
 
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.edit_text("Отправь сообщение для всех:")
+    await query.message.edit_text("Отправь сообщение для всех:", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_broadcast'
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -328,15 +329,23 @@ async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not PRODUCTS:
         await query.message.edit_text("Каталог пуст.", reply_markup=get_back_menu())
         return
+    # Отправляем товары с кнопкой "Назад" под каждым
     for k, v in PRODUCTS.items():
-        keyboard = [[InlineKeyboardButton("💳 Купить", callback_data=f"buy_{k}")]]
+        keyboard = [
+            [InlineKeyboardButton("💳 Купить", callback_data=f"buy_{k}")],
+            [InlineKeyboardButton("⬅️ В главное меню", callback_data="back_menu")]
+        ]
         await query.message.reply_text(f"📦 *{v['name']}*\n\n{v['desc']}\n\n💰 Цена: *{v['price']} ⭐*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def back_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['state'] = None
-    await query.message.edit_text("👋 Главное меню:", reply_markup=get_main_menu(query.from_user.id))
+    # Если нельзя изменить сообщение (например, это фото), отправляем новое
+    try:
+        await query.message.edit_text("👋 Главное меню:", reply_markup=get_main_menu(query.from_user.id))
+    except:
+        await query.message.reply_text("👋 Главное меню:", reply_markup=get_main_menu(query.from_user.id))
 
 # --- ЗАПУСК ---
 flask_app = Flask(__name__)
