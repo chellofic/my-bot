@@ -1,18 +1,15 @@
 import os
 import asyncio
-import aiohttp
 import random
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler, 
-    ContextTypes, MessageHandler, filters
+    ContextTypes, MessageHandler, filters, PreCheckoutQueryHandler
 )
 
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
-CRYPTO_PAY_TOKEN = os.environ.get("CRYPTO_PAY_TOKEN")
-API_URL = "https://pay.crypt.bot/api/"
 
 PRODUCTS = {}
 PROMOS = {}
@@ -62,65 +59,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"👤 *Твой профиль*\n\n🆔 ID: `{user_id}`\n🎁 Скидка: *{discount}%*\n🛍 Покупок: *{purchases}*"
     await query.message.reply_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- СОЗДАНИЕ СЧЕТА (В РУБЛЯХ) ---
-async def create_crypto_invoice(item, discount=0):
-    headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
-    final_price = int(item['price']) - (int(item['price']) * discount // 100)
-    
-    # ВАЛЮТА ИЗМЕНЕНА НА РУБЛИ
-    payload = {
-        "currency_type": "fiat",
-        "fiat": "RUB",
-        "amount": str(final_price),
-        "description": f"Покупка: {item['name']}"
-    }
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(f"{API_URL}createInvoice", json=payload, headers=headers) as resp:
-            data = await resp.json()
-            if data.get("ok"):
-                return data["result"]["bot_invoice_url"], final_price, data["result"]["invoice_id"]
-    return None, final_price, None
-
-# --- ПРОВЕРКА ОПЛАТЫ ---
-async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    data_parts = query.data.split("_")
-    invoice_id = data_parts[2]
-    product_id = int(data_parts[1])
-    item = PRODUCTS.get(product_id)
-    
-    if not item: return
-    
-    await query.message.edit_text("⏳ Проверяю оплату...")
-    
-    headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(f"{API_URL}getInvoices?invoice_ids={invoice_id}", headers=headers) as resp:
-            data = await resp.json()
-            if data.get("ok"):
-                invoice = data["result"]["items"][0]
-                if invoice["status"] == "paid":
-                    user_id = query.from_user.id
-                    USER_PURCHASES[user_id] = USER_PURCHASES.get(user_id, 0) + 1
-                    
-                    license_key = item['key']
-                    await query.message.edit_text(
-                        f"✅ *Оплата прошла успешно!*\n\n"
-                        f"Товар: {item['name']}\n"
-                        f"Ключ покупки: `{license_key}`\n\n"
-                        f"Твой конфиг ниже. Зажми на него и выбери 'Копировать'.",
-                        parse_mode="Markdown"
-                    )
-                    await query.message.reply_text(item['text'])
-                    keyboard = [[InlineKeyboardButton("⬅️ В главное меню", callback_data="back_menu")]]
-                    await query.message.reply_text("Что-нибудь еще?", reply_markup=InlineKeyboardMarkup(keyboard))
-                else:
-                    await query.message.edit_text("❌ Оплата еще не поступила. Попробуй через минуту.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Проверить снова", callback_data=f"check_{product_id}_{invoice_id}")]]))
-
-# --- КНОПКА КУПИТЬ ---
+# --- КНОПКА КУПИТЬ (ОПЛАТА ЗВЕЗДАМИ) ---
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -133,25 +72,49 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     discount = user_promo.get(query.from_user.id, 0)
+    final_price = int(item['price']) - (int(item['price']) * discount // 100)
     
-    await query.message.edit_text("⏳ Создаю счет на оплату...")
-    pay_url, final_price, invoice_id = await create_crypto_invoice(item, discount)
+    # Выставляем счет в звездах
+    await context.bot.send_invoice(
+        chat_id=query.message.chat_id,
+        title=item['name'],
+        description=item['desc'],
+        payload=f"buy_{config_key}",
+        provider_token="", # Для звезд оставляем пустым
+        currency="XTR",    # Код валюты Telegram Stars
+        prices=[LabeledPrice(label=item['name'], amount=final_price)],
+    )
+
+# --- ПОДТВЕРЖДЕНИЕ ОПЛАТЫ ---
+async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.pre_checkout_query.answer(ok=True)
+
+# --- УСПЕШНАЯ ОПЛАТА (ВЫДАЧА ТОВАРА) ---
+async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    payload = update.message.successful_payment.invoice_payload
+    config_key = int(payload.replace("buy_", ""))
+    item = PRODUCTS.get(config_key)
     
-    if pay_url:
-        keyboard = [
-            [InlineKeyboardButton(f"💸 Оплатить {final_price} ₽", url=pay_url)],
-            [InlineKeyboardButton("✅ Я оплатил (Проверить)", callback_data=f"check_{config_key}_{invoice_id}")]
-        ]
-        await query.message.edit_text(
-            f"💳 *Счет создан!*\n\n"
-            f"Товар: {item['name']}\n"
-            f"Цена: *{final_price} руб.*\n\n"
-            f"Нажми кнопку ниже, чтобы оплатить. После оплаты нажми «Я оплатил».",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    else:
-        await query.message.edit_text("❌ Ошибка при создании счета. Проверь токен CryptoBot.")
+    if not item:
+        await update.message.reply_text("Ошибка: товар не найден.")
+        return
+
+    user_id = update.effective_user.id
+    USER_PURCHASES[user_id] = USER_PURCHASES.get(user_id, 0) + 1
+    
+    license_key = item['key']
+    
+    await update.message.reply_text(
+        f"✅ *Оплата прошла успешно!*\n\n"
+        f"Товар: {item['name']}\n"
+        f"Ключ покупки: `{license_key}`\n\n"
+        f"Твой конфиг ниже. Зажми на него и выбери 'Копировать'.",
+        parse_mode="Markdown"
+    )
+    await update.message.reply_text(item['text'])
+    
+    keyboard = [[InlineKeyboardButton("⬅️ В главное меню", callback_data="back_menu")]]
+    await update.message.reply_text("Что-нибудь еще?", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # --- АДМИНКА ---
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -173,7 +136,7 @@ async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.delete()
-    await query.message.reply_text("Введи данные товара в формате:\n`Название | Цена | Описание | Код | Ключ`", parse_mode="Markdown", reply_markup=get_back_menu())
+    await query.message.reply_text("Введи данные товара в формате:\n`Название | Цена в звездах (число) | Описание | Код | Ключ`", parse_mode="Markdown", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_product'
 
 async def admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -300,7 +263,7 @@ async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("Каталог пуст.", reply_markup=get_back_menu())
         return
     for k, v in PRODUCTS.items():
-        text = f"📦 *{v['name']}*\n\n{v['desc']}\n\n💰 Цена: *{v['price']} руб.*"
+        text = f"📦 *{v['name']}*\n\n{v['desc']}\n\n💰 Цена: *{v['price']} ⭐*"
         keyboard = [[InlineKeyboardButton("💳 Купить", callback_data=f"buy_{k}")]]
         await query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -331,8 +294,11 @@ async def main():
     app.add_handler(CallbackQueryHandler(view_reviews, pattern="^view_reviews$"))
     app.add_handler(CallbackQueryHandler(catalog, pattern="^catalog$"))
     app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
-    app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_"))
     app.add_handler(CallbackQueryHandler(back_menu, pattern="^back_menu$"))
+    
+    # Обработчики оплаты
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     await app.initialize()
