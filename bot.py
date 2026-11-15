@@ -1,5 +1,6 @@
 import os
 import asyncio
+import aiohttp
 import random
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,13 +11,14 @@ from telegram.ext import (
 
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
+CRYPTO_PAY_TOKEN = os.environ.get("CRYPTO_PAY_TOKEN")
+API_URL = "https://pay.crypt.bot/api/"
 
-# --- ВРЕМЕННАЯ ПАМЯТЬ ---
 PRODUCTS = {}
 PROMOS = {}
 REVIEWS = []
-USERS = set() # Храним всех, кто нажал /start
-USER_PURCHASES = {} # Сколько купил каждый
+USERS = set() 
+USER_PURCHASES = {} 
 next_id = 1
 user_promo = {}
 
@@ -38,21 +40,18 @@ def get_back_menu():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['state'] = None
     user_id = update.effective_user.id
-    USERS.add(user_id) # Запоминаем пользователя для рассылки
+    USERS.add(user_id)
     await update.message.reply_text("👋 Добро пожаловать в магазин!", reply_markup=get_main_menu(user_id == ADMIN_ID))
 
-# --- СЕКРЕТНАЯ КОМАНДА ---
 async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in user_promo:
         await update.message.reply_text("Ты уже использовал удачу!")
         return
-    
     discount = random.choice([1, 5, 10])
     user_promo[user_id] = discount
-    await update.message.reply_text(f"🎲 Тебе выпала скидка *{discount}%*! Она автоматически применится при покупке.", parse_mode="Markdown")
+    await update.message.reply_text(f"🎲 Тебе выпала скидка *{discount}%*!", parse_mode="Markdown")
 
-# --- ПРОФИЛЬ ---
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -60,22 +59,29 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     discount = user_promo.get(user_id, 0)
     purchases = USER_PURCHASES.get(user_id, 0)
-    
-    text = (
-        f"👤 *Твой профиль*\n\n"
-        f"🆔 ID: `{user_id}`\n"
-        f"🎁 Скидка: *{discount}%*\n"
-        f"🛍 Покупок: *{purchases}*"
-    )
+    text = f"👤 *Твой профиль*\n\n🆔 ID: `{user_id}`\n🎁 Скидка: *{discount}%*\n🛍 Покупок: *{purchases}*"
     await query.message.reply_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- АДМИНКА ---
+async def create_crypto_invoice(item, discount=0):
+    headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
+    final_price = int(item['price']) - (int(item['price']) * discount // 100)
+    payload = {
+        "asset": "USDT",
+        "amount": str(final_price),
+        "description": f"Покупка: {item['name']}"
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f"{API_URL}createInvoice", json=payload, headers=headers) as resp:
+            data = await resp.json()
+            if data.get("ok"):
+                return data["result"]["bot_invoice_url"], final_price
+    return None, final_price
+
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['state'] = None
     if query.from_user.id != ADMIN_ID: return
-    
     keyboard = [
         [InlineKeyboardButton("➕ Добавить товар", callback_data="admin_add")],
         [InlineKeyboardButton("🗑 Удалить товар", callback_data="admin_delete")],
@@ -84,7 +90,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ В меню", callback_data="back_menu")]
     ]
     await query.message.delete()
-    await query.message.reply_text("⚙️ Админ-панель. Выбери действие:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.message.reply_text("⚙️ Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -110,17 +116,16 @@ async def admin_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.delete()
-    await query.message.reply_text("Введи промокод и скидку в % через пробел (например: `NUAR50 50`):", reply_markup=get_back_menu())
+    await query.message.reply_text("Введи промокод и скидку (например: `NUAR50 50`):", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_promo'
 
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.delete()
-    await query.message.reply_text("Отправь сообщение, которое получат ВСЕ пользователи бота:", reply_markup=get_back_menu())
+    await query.message.reply_text("Отправь сообщение для всех:", reply_markup=get_back_menu())
     context.user_data['state'] = 'awaiting_broadcast'
 
-# --- КЛИЕНТСКИЕ КНОПКИ ---
 async def promo_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -145,13 +150,11 @@ async def view_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "⭐ *Последние отзывы:*\n\n" + "\n\n".join([f"• {r}" for r in REVIEWS[-5:]])
     await query.message.reply_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- ОБРАБОТКА ТЕКСТА ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     state = context.user_data.get('state')
     text = update.message.text
     user_id = update.effective_user.id
-    
     if not state: return
 
     if state == 'awaiting_product' and user_id == ADMIN_ID:
@@ -163,7 +166,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("✅ Товар добавлен!", reply_markup=get_back_menu())
                 context.user_data['state'] = None
             else:
-                raise ValueError("Нужно 5 частей через ' | '")
+                raise ValueError("Нужно 5 частей")
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_back_menu())
 
@@ -172,38 +175,37 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product_id = int(text)
             if product_id in PRODUCTS:
                 del PRODUCTS[product_id]
-                await update.message.reply_text(f"✅ Товар {product_id} удален!", reply_markup=get_back_menu())
+                await update.message.reply_text(f"✅ Товар удален!", reply_markup=get_back_menu())
             else:
-                await update.message.reply_text("❌ Товар не найден.", reply_markup=get_back_menu())
+                await update.message.reply_text("❌ Не найден.", reply_markup=get_back_menu())
         except:
-            await update.message.reply_text("❌ Введи число (ID).", reply_markup=get_back_menu())
+            await update.message.reply_text("❌ Введи число.", reply_markup=get_back_menu())
         context.user_data['state'] = None
 
     elif state == 'awaiting_promo' and user_id == ADMIN_ID:
         try:
             code, discount = text.split(" ")
             PROMOS[code.upper()] = int(discount)
-            await update.message.reply_text(f"✅ Промокод {code.upper()} на {discount}% создан!", reply_markup=get_back_menu())
+            await update.message.reply_text(f"✅ Промокод {code.upper()} создан!", reply_markup=get_back_menu())
         except:
-            await update.message.reply_text("❌ Ошибка. Пример: `NUAR50 50`", reply_markup=get_back_menu())
+            await update.message.reply_text("❌ Ошибка формата.", reply_markup=get_back_menu())
         context.user_data['state'] = None
 
     elif state == 'awaiting_broadcast' and user_id == ADMIN_ID:
         success = 0
         for uid in USERS:
             try:
-                await context.bot.send_message(chat_id=uid, text=f"📢 <b>Сообщение от админа:</b>\n\n{text}", parse_mode="HTML")
+                await context.bot.send_message(chat_id=uid, text=f"📢 <b>Сообщение:</b>\n\n{text}", parse_mode="HTML")
                 success += 1
-            except:
-                pass
-        await update.message.reply_text(f"✅ Рассылка завершена! Доставлено: {success} чел.", reply_markup=get_back_menu())
+            except: pass
+        await update.message.reply_text(f"✅ Доставлено: {success} чел.", reply_markup=get_back_menu())
         context.user_data['state'] = None
 
     elif state == 'awaiting_promo_code':
         code = text.upper()
         if code in PROMOS:
             user_promo[user_id] = PROMOS[code]
-            await update.message.reply_text(f"✅ Промокод применен! Скидка {PROMOS[code]}%", reply_markup=get_main_menu(user_id == ADMIN_ID))
+            await update.message.reply_text(f"✅ Скидка {PROMOS[code]}% применена!", reply_markup=get_main_menu(user_id == ADMIN_ID))
         else:
             await update.message.reply_text("❌ Промокод не найден.", reply_markup=get_main_menu(user_id == ADMIN_ID))
         context.user_data['state'] = None
@@ -213,7 +215,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Спасибо за отзыв!", reply_markup=get_main_menu(user_id == ADMIN_ID))
         context.user_data['state'] = None
 
-# --- КАТАЛОГ ---
 async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -233,7 +234,6 @@ async def back_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.delete()
     await query.message.reply_text("👋 Главное меню:", reply_markup=get_main_menu(query.from_user.id == ADMIN_ID))
 
-# --- ЗАПУСК ---
 flask_app = Flask(__name__)
 
 @flask_app.route("/")
@@ -242,7 +242,7 @@ def health(): return "Bot is running"
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("roll", roll)) # Пасхалка
+    app.add_handler(CommandHandler("roll", roll))
     app.add_handler(CallbackQueryHandler(profile, pattern="^profile$"))
     app.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin_panel$"))
     app.add_handler(CallbackQueryHandler(admin_add, pattern="^admin_add$"))
@@ -263,7 +263,6 @@ async def main():
     import threading
     port = int(os.environ.get("PORT", 8080))
     threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=port), daemon=True).start()
-    
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
