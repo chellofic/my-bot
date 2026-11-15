@@ -58,14 +58,14 @@ def get_main_menu(user_id):
 def get_back_menu():
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В главное меню", callback_data="back_menu")]])
 
-# --- ЧИСТЫЙ ПЕРЕХОД (УДАЛЕНИЕ И ПАУЗА) ---
+# --- ПРОСТОЙ И ПЛАВНЫЙ ПЕРЕХОД (УДАЛЕНИЕ + ПАУЗА) ---
 async def smooth_transition(query, text, reply_markup=None, parse_mode=None):
     try:
         await query.message.delete()
     except:
         pass
     
-    await asyncio.sleep(0.8) # Та самая пауза, чтобы было не резко
+    await asyncio.sleep(1.5) # Та самая пауза, чтобы не резало глаз
     
     await query.message.chat.send_message(
         text=text, 
@@ -92,17 +92,12 @@ async def roll_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # Просто удаляем и ждем
-    try: await query.message.delete()
-    except: pass
-    await asyncio.sleep(0.8)
-    
     user_id = query.from_user.id
     u = get_user(user_id)
     now = time.time()
     
     if now - u["last_roll"] < 86400:
-        await query.message.chat.send_message("⏳ Ты уже крутил сегодня. Приходи завтра!", reply_markup=get_back_menu())
+        await smooth_transition(query, "⏳ Ты уже крутил сегодня. Приходи завтра!", get_back_menu())
         return
         
     u["last_roll"] = now
@@ -117,7 +112,7 @@ async def roll_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u["exp"] += amount
         text = f"🎉 Ты выиграл *{amount} EXP*!"
         
-    await query.message.chat.send_message(text, parse_mode="Markdown", reply_markup=get_back_menu())
+    await smooth_transition(query, text, get_back_menu(), "Markdown")
 
 async def ref_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -195,7 +190,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try: await query.message.delete()
     except: pass
-    await asyncio.sleep(0.8)
+    await asyncio.sleep(1.5)
     
     await context.bot.send_invoice(
         chat_id=query.message.chat_id,
@@ -351,7 +346,7 @@ async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try: await query.message.delete()
     except: pass
-    await asyncio.sleep(0.8) # Пауза 0.8 сек
+    await asyncio.sleep(1.5)
     
     if not PRODUCTS:
         await query.message.chat.send_message("Каталог пуст.", reply_markup=get_back_menu())
