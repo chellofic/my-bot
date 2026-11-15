@@ -16,9 +16,9 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 PRODUCTS = {}
 PROMOS = {}
 REVIEWS = []
-USERS = {} # {user_id: {"exp": 0, "ref_by": None, "last_roll": 0, "purchases": 0}}
+USERS = {} 
 next_id = 1
-user_promo = {} # Временные скидки (из рулетки или промокода)
+user_promo = {} 
 
 SETTINGS = {
     "welcome_text": "👋 Добро пожаловать в магазин Nuar!",
@@ -29,7 +29,6 @@ SETTINGS = {
     "roll_btn": "🎰 Рулетка"
 }
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def get_user(user_id):
     if user_id not in USERS:
         USERS[user_id] = {"exp": 0, "ref_by": None, "last_roll": 0, "purchases": 0}
@@ -59,7 +58,6 @@ def get_main_menu(user_id):
 def get_back_menu():
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="back_menu")]])
 
-# --- СТАРТ И РЕФЕРАЛЫ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['state'] = None
     user_id = update.effective_user.id
@@ -75,7 +73,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(SETTINGS['welcome_text'], reply_markup=get_main_menu(user_id))
 
-# --- РУЛЕТКА (ТОЛЬКО СКИДКИ И ОПЫТ) ---
 async def roll_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -88,12 +85,10 @@ async def roll_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     u["last_roll"] = now
-    
-    # Призы: скидки (шанс 70%) и опыт (шанс 30%)
     prize_type = random.choices(["discount", "exp"], weights=[70, 30])[0]
     
     if prize_type == "discount":
-        discount = random.choice([5, 10, 15, 20, 25, 30]) # Скидка до 30%
+        discount = random.choice([5, 10, 15, 20, 25, 30])
         user_promo[user_id] = discount
         text = f"🎉 Ты выиграл скидку *{discount}%* на следующую покупку!"
     else:
@@ -103,7 +98,6 @@ async def roll_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     await query.message.edit_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- РЕФЕРАЛЫ ---
 async def ref_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -118,7 +112,6 @@ async def ref_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await query.message.edit_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- ПРОФИЛЬ ---
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -139,6 +132,28 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await query.message.edit_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
+# --- ПРОМОКОДЫ И ОТЗЫВЫ (КЛИЕНТ) ---
+async def promo_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.edit_text("Отправь мне промокод:")
+    context.user_data['state'] = 'awaiting_promo_code'
+
+async def leave_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.edit_text("Напиши свой отзыв:")
+    context.user_data['state'] = 'awaiting_review'
+
+async def view_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not REVIEWS:
+        await query.message.edit_text("Пока нет отзывов.", reply_markup=get_back_menu())
+        return
+    text = "⭐ *Последние отзывы:*\n\n" + "\n\n".join([f"• {r}" for r in REVIEWS[-5:]])
+    await query.message.edit_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
+
 # --- ОПЛАТА ---
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -154,7 +169,6 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     temp_discount = user_promo.get(user_id, 0)
     total_discount = level_discount + temp_discount
     
-    # Ограничиваем макс скидку 50%
     if total_discount > 50: total_discount = 50
     
     price = int(item['price'])
@@ -181,9 +195,8 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     u = get_user(user_id)
     u["purchases"] += 1
-    u["exp"] += 50 # Опыт за покупку
+    u["exp"] += 50
     
-    # Начисление опыта рефералу
     if u["ref_by"]:
         ref_u = get_user(u["ref_by"])
         ref_u["exp"] += 100
@@ -220,7 +233,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🗑 Удалить товар", callback_data="admin_delete")],
         [InlineKeyboardButton("🎟 Создать промокод", callback_data="admin_promo")],
         [InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("✏️ Тексты", callback_data="admin_edit_texts")],
         [InlineKeyboardButton("⬅️ В меню", callback_data="back_menu")]
     ]
     await query.message.edit_text("⚙️ Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -296,6 +308,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Отправлено: {success}", reply_markup=get_back_menu())
         context.user_data['state'] = None
 
+    elif state == 'awaiting_promo_code':
+        code = text.upper()
+        if code in PROMOS:
+            user_promo[user_id] = PROMOS[code]
+            await update.message.reply_text(f"✅ Скидка {PROMOS[code]}% применена!", reply_markup=get_main_menu(user_id))
+        else:
+            await update.message.reply_text("❌ Промокод не найден.", reply_markup=get_main_menu(user_id))
+        context.user_data['state'] = None
+
+    elif state == 'awaiting_review':
+        REVIEWS.append(text)
+        await update.message.reply_text("✅ Спасибо за отзыв!", reply_markup=get_main_menu(user_id))
+        context.user_data['state'] = None
+
 async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -332,7 +358,11 @@ async def main():
     app.add_handler(CallbackQueryHandler(profile, pattern="^profile$"))
     app.add_handler(CallbackQueryHandler(ref_system, pattern="^ref_sys$"))
     app.add_handler(CallbackQueryHandler(roll_game, pattern="^roll$"))
+    app.add_handler(CallbackQueryHandler(promo_menu, pattern="^promo$"))
+    app.add_handler(CallbackQueryHandler(leave_review, pattern="^leave_review$"))
+    app.add_handler(CallbackQueryHandler(view_reviews, pattern="^view_reviews$"))
     app.add_handler(CallbackQueryHandler(back_menu, pattern="^back_menu$"))
+    
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
