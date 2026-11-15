@@ -11,6 +11,7 @@ from telegram.ext import (
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 
+# --- БАЗА ДАННЫХ В ПАМЯТИ ---
 PRODUCTS = {}
 PROMOS = {}
 REVIEWS = []
@@ -19,13 +20,21 @@ USER_PURCHASES = {}
 next_id = 1
 user_promo = {}
 
+# --- РЕДАКТИРУЕМЫЕ НАСТРОЙКИ ---
+SETTINGS = {
+    "welcome_text": "👋 Добро пожаловать в магазин конфигов Nuar!",
+    "support_text": "🛡 Поддержка",
+    "catalog_btn": "🛒 Каталог",
+    "profile_btn": "👤 Мой профиль",
+}
+
 def get_main_menu(is_admin=False):
     keyboard = [
-        [InlineKeyboardButton("🛒 Каталог", callback_data="catalog")],
-        [InlineKeyboardButton("👤 Мой профиль", callback_data="profile")],
+        [InlineKeyboardButton(SETTINGS['catalog_btn'], callback_data="catalog")],
+        [InlineKeyboardButton(SETTINGS['profile_btn'], callback_data="profile")],
         [InlineKeyboardButton("🎟 Ввести промокод", callback_data="promo")],
         [InlineKeyboardButton("💬 Оставить отзыв", callback_data="leave_review"), InlineKeyboardButton("⭐ Отзывы", callback_data="view_reviews")],
-        [InlineKeyboardButton("🛡 Поддержка", url=f"tg://user?id={ADMIN_ID}")]
+        [InlineKeyboardButton(SETTINGS['support_text'], url=f"tg://user?id={ADMIN_ID}")]
     ]
     if is_admin:
         keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
@@ -38,7 +47,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['state'] = None
     user_id = update.effective_user.id
     USERS.add(user_id)
-    await update.message.reply_text("👋 Добро пожаловать в магазин!", reply_markup=get_main_menu(user_id == ADMIN_ID))
+    await update.message.reply_text(SETTINGS['welcome_text'], reply_markup=get_main_menu(user_id == ADMIN_ID))
 
 async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -59,7 +68,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"👤 *Твой профиль*\n\n🆔 ID: `{user_id}`\n🎁 Скидка: *{discount}%*\n🛍 Покупок: *{purchases}*"
     await query.message.reply_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
 
-# --- КНОПКА КУПИТЬ (ОПЛАТА ЗВЕЗДАМИ) ---
+# --- ОПЛАТА ЗВЕЗДАМИ ---
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -74,22 +83,19 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     discount = user_promo.get(query.from_user.id, 0)
     final_price = int(item['price']) - (int(item['price']) * discount // 100)
     
-    # Выставляем счет в звездах
     await context.bot.send_invoice(
         chat_id=query.message.chat_id,
         title=item['name'],
         description=item['desc'],
         payload=f"buy_{config_key}",
-        provider_token="", # Для звезд оставляем пустым
-        currency="XTR",    # Код валюты Telegram Stars
+        provider_token="",
+        currency="XTR",
         prices=[LabeledPrice(label=item['name'], amount=final_price)],
     )
 
-# --- ПОДТВЕРЖДЕНИЕ ОПЛАТЫ ---
 async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
 
-# --- УСПЕШНАЯ ОПЛАТА (ВЫДАЧА ТОВАРА) ---
 async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payload = update.message.successful_payment.invoice_payload
     config_key = int(payload.replace("buy_", ""))
@@ -101,7 +107,6 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user_id = update.effective_user.id
     USER_PURCHASES[user_id] = USER_PURCHASES.get(user_id, 0) + 1
-    
     license_key = item['key']
     
     await update.message.reply_text(
@@ -112,11 +117,10 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode="Markdown"
     )
     await update.message.reply_text(item['text'])
-    
     keyboard = [[InlineKeyboardButton("⬅️ В главное меню", callback_data="back_menu")]]
     await update.message.reply_text("Что-нибудь еще?", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- АДМИНКА ---
+# --- АДМИНКА (С РЕДАКТОРОМ) ---
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -127,10 +131,33 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🗑 Удалить товар", callback_data="admin_delete")],
         [InlineKeyboardButton("🎟 Создать промокод", callback_data="admin_promo")],
         [InlineKeyboardButton("📢 Сделать рассылку", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("✏️ Редактировать тексты", callback_data="admin_edit_texts")],
         [InlineKeyboardButton("⬅️ В меню", callback_data="back_menu")]
     ]
     await query.message.delete()
     await query.message.reply_text("⚙️ Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def admin_edit_texts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+    keyboard = [
+        [InlineKeyboardButton("Текст приветствия", callback_data="edit_welcome_text")],
+        [InlineKeyboardButton("Текст поддержки", callback_data="edit_support_text")],
+        [InlineKeyboardButton("Название 'Каталог'", callback_data="edit_catalog_btn")],
+        [InlineKeyboardButton("Название 'Профиль'", callback_data="edit_profile_btn")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel")]
+    ]
+    await query.message.reply_text("Выбери, что хочешь изменить:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def edit_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    setting_key = query.data.replace("edit_", "")
+    context.user_data['edit_setting_key'] = setting_key
+    await query.message.delete()
+    await query.message.reply_text("Отправь новый текст:", reply_markup=get_back_menu())
+    context.user_data['state'] = 'awaiting_setting_text'
 
 async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -197,7 +224,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not state: return
 
-    if state == 'awaiting_product' and user_id == ADMIN_ID:
+    if state == 'awaiting_setting_text' and user_id == ADMIN_ID:
+        setting_key = context.user_data.get('edit_setting_key')
+        SETTINGS[setting_key] = text
+        await update.message.reply_text(f"✅ Текст обновлен!", reply_markup=get_back_menu())
+        context.user_data['state'] = None
+
+    elif state == 'awaiting_product' and user_id == ADMIN_ID:
         try:
             parts = text.split(" | ")
             if len(parts) == 5:
@@ -285,6 +318,8 @@ async def main():
     app.add_handler(CommandHandler("roll", roll))
     app.add_handler(CallbackQueryHandler(profile, pattern="^profile$"))
     app.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin_panel$"))
+    app.add_handler(CallbackQueryHandler(admin_edit_texts, pattern="^admin_edit_texts$"))
+    app.add_handler(CallbackQueryHandler(edit_setting, pattern="^edit_"))
     app.add_handler(CallbackQueryHandler(admin_add, pattern="^admin_add$"))
     app.add_handler(CallbackQueryHandler(admin_delete, pattern="^admin_delete$"))
     app.add_handler(CallbackQueryHandler(admin_promo, pattern="^admin_promo$"))
@@ -296,7 +331,6 @@ async def main():
     app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(back_menu, pattern="^back_menu$"))
     
-    # Обработчики оплаты
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
