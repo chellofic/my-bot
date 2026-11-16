@@ -13,14 +13,10 @@ TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 
 # --- БАЗЫ ДАННЫХ (В ПАМЯТИ) ---
-PRODUCTS = {} # Твои конфиги
+PRODUCTS = {}
 USERS = {} 
 next_id = 1
 user_promo = {} 
-
-SETTINGS = {
-    "welcome_text": "🔥 Главное меню NuarDLC",
-}
 
 def get_user(user_id, username="Игрок"):
     if user_id not in USERS:
@@ -43,7 +39,6 @@ def get_page_1(user_id):
 
 # --- ГЛАВНОЕ МЕНЮ (СТРАНИЦА 2) ---
 def get_page_2(user_id):
-    u = get_user(user_id)
     text = "📄 Меню — Страница 2"
     
     keyboard = [
@@ -64,6 +59,7 @@ async def edit_msg(query, text, reply_markup=None):
     except:
         await query.message.chat.send_message(text=text, reply_markup=reply_markup, parse_mode="Markdown")
 
+# --- СТАРТ (РЕДАКТИРУЕТ СООБЩЕНИЕ, А НЕ ПРИСЫЛАЕТ НОВОЕ) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['state'] = None
     user_id = update.effective_user.id
@@ -71,7 +67,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     get_user(user_id, name)
     
     text, markup = get_page_1(user_id)
-    await update.message.reply_text(text, reply_markup=markup, parse_mode="Markdown")
+    
+    # Проверяем, есть ли старое сообщение, чтобы отредактировать его
+    if update.message:
+        await update.message.reply_text(text, reply_markup=markup, parse_mode="Markdown")
+    else:
+        await update.callback_query.message.edit_text(text, reply_markup=markup, parse_mode="Markdown")
 
 # --- ПЕРЕКЛЮЧЕНИЕ СТРАНИЦ ---
 async def page_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -92,7 +93,7 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, markup = get_page_1(query.from_user.id)
     await edit_msg(query, text, markup)
 
-# --- ЗАГЛУШКИ ДЛЯ КНОПОК (ЧТОБЫ НЕ ВИСЕЛИ) ---
+# --- ЗАГЛУШКИ ДЛЯ КНОПОК ---
 async def placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("🛠 В разработке...", show_alert=True)
@@ -100,7 +101,6 @@ async def placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- ЕЖЕДНЕВНЫЙ БОНУС ---
 async def daily_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
     u = get_user(user_id)
     now = time.time()
@@ -116,7 +116,7 @@ async def daily_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, markup = get_page_1(user_id)
     await edit_msg(query, text, markup)
 
-# --- КАТАЛОГ (ТВОИ КОНФИГИ) ---
+# --- КАТАЛОГ ---
 async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -125,62 +125,23 @@ async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_msg(query, "📦 Каталог пока пуст. Админ скоро добавит товары.", get_back_menu())
         return
         
+    text = "🛒 *Доступные конфиги:*\n\n"
     for k, v in PRODUCTS.items():
-        keyboard = [[InlineKeyboardButton(f"💳 Купить за {v['price']} ⭐", callback_data=f"buy_{k}")]]
-        await query.message.chat.send_message(f"📦 *{v['name']}*\n\n{v['desc']}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    await query.message.chat.send_message("Выбери товар выше 👆", reply_markup=get_back_menu())
+        text += f"📦 *{v['name']}*\n{v['desc']}\nЦена: {v['price']} ⭐\n\n"
+    
+    keyboard = [[InlineKeyboardButton("💳 Купить", callback_data="buy_menu")]]
+    await edit_msg(query, text, InlineKeyboardMarkup(keyboard))
 
-async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def buy_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    config_key = int(query.data.replace("buy_", ""))
-    item = PRODUCTS.get(config_key)
-    if not item: return
+    await edit_msg(query, "Выбери товар из каталога выше 👆", get_back_menu())
 
-    user_id = query.from_user.id
-    u = get_user(user_id)
-    price = int(item['price'])
-    
-    if u["stars"] >= price:
-        u["stars"] -= price
-        await query.message.chat.send_message(f"✅ Ты купил *{item['name']}* за звезды с баланса!\n\nКлюч: `{item['key']}`\nКонфиг: `{item['text']}`", parse_mode="Markdown")
-    else:
-        await context.bot.send_invoice(
-            chat_id=query.message.chat_id,
-            title=item['name'],
-            description=item['desc'],
-            payload=f"buy_{config_key}",
-            provider_token="",
-            currency="XTR",
-            prices=[LabeledPrice(label=item['name'], amount=price)],
-        )
-
-async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.pre_checkout_query.answer(ok=True)
-
-async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    payload = update.message.successful_payment.invoice_payload
-    config_key = int(payload.replace("buy_", ""))
-    item = PRODUCTS.get(config_key)
-    user_id = update.effective_user.id
-    u = get_user(user_id)
-    u["stars"] += 10 # Бонус за покупку
-    
-    await update.message.reply_text(f"✅ *Покупка успешна!*\n\nКлюч: `{item['key']}`\nКонфиг: `{item['text']}`", parse_mode="Markdown")
-
-# --- ПРОФИЛЬ ---
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     u = get_user(query.from_user.id)
-    
-    text = (
-        f"👤 *Твой профиль*\n\n"
-        f"🆔 ID: `{query.from_user.id}`\n"
-        f"⭐ Баланс: *{u['stars']}*\n"
-        f"🛍 Покупок: *{u['purchases']}*"
-    )
+    text = f"👤 *Твой профиль*\n\n🆔 ID: `{query.from_user.id}`\n⭐ Баланс: *{u['stars']}*\n🛍 Покупок: *{u['purchases']}*"
     await edit_msg(query, text, get_back_menu())
 
 # --- РЕФЕРАЛЫ ---
@@ -192,17 +153,18 @@ async def ref_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"👥 *Пригласи друга!*\n\nТвоя ссылка:\n`{link}`\n\nЗа друга ты получишь 20 ⭐"
     await edit_msg(query, text, get_back_menu())
 
-# --- АДМИНКА (ДОБАВЛЕНИЕ ТОВАРОВ) ---
+# --- АДМИНКА ---
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.from_user.id != ADMIN_ID: return
-    
-    keyboard = [
-        [InlineKeyboardButton("➕ Добавить конфиг", callback_data="admin_add")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]
-    ]
-    await edit_msg(query, "⚙️ Админ-панель:", InlineKeyboardMarkup(keyboard))
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        if query.from_user.id != ADMIN_ID: return
+        keyboard = [[InlineKeyboardButton("➕ Добавить конфиг", callback_data="admin_add")], [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]]
+        await edit_msg(query, "⚙️ Админ-панель:", InlineKeyboardMarkup(keyboard))
+    else:
+        if update.effective_user.id == ADMIN_ID:
+            keyboard = [[InlineKeyboardButton("➕ Добавить конфиг", callback_data="admin_add")], [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]]
+            await update.message.reply_text("⚙️ Админ-панель:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -235,35 +197,26 @@ def health(): return "Bot is running"
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Команды
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_panel)) # Секретная команда для входа в админку
+    app.add_handler(CommandHandler("admin", admin_panel))
     
-    # Кнопки меню
     app.add_handler(CallbackQueryHandler(page_1, pattern="^page_1$"))
     app.add_handler(CallbackQueryHandler(page_2, pattern="^page_2$"))
     app.add_handler(CallbackQueryHandler(back_to_main, pattern="^back_to_main$"))
     app.add_handler(CallbackQueryHandler(daily_bonus, pattern="^daily_bonus$"))
-    
-    # Кнопки с товарами и профилем
     app.add_handler(CallbackQueryHandler(catalog, pattern="^catalog$"))
-    app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
+    app.add_handler(CallbackQueryHandler(buy_menu, pattern="^buy_menu$"))
     app.add_handler(CallbackQueryHandler(profile, pattern="^profile$"))
     app.add_handler(CallbackQueryHandler(ref_system, pattern="^ref_sys$"))
-    
-    # Админка
     app.add_handler(CallbackQueryHandler(admin_add, pattern="^admin_add$"))
+    app.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin_panel$"))
+    
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    # Заглушки для остальных кнопок (Кейсы, Игры, Бизнесы и т.д.)
     placeholders = ["event", "games", "cases", "buy_vip", "business", "mining", "job", "cars", "clans", "harbor", "tops", "promo"]
     for p in placeholders:
         app.add_handler(CallbackQueryHandler(placeholder, pattern=f"^{p}$"))
 
-    # Оплата
-    app.add_handler(PreCheckoutQueryHandler(pre_checkout))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
-    
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
