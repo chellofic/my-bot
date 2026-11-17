@@ -12,6 +12,7 @@ from telegram.ext import (
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 
+# --- БАЗЫ ДАННЫХ (В ПАМЯТИ) ---
 PRODUCTS = {}
 USERS = {} 
 next_id = 1
@@ -28,6 +29,7 @@ def get_user(user_id, username="Игрок"):
         }
     return USERS[user_id]
 
+# --- КЛАВИАТУРЫ ---
 def get_kb_page1(user_id):
     keyboard = [
         ["🛒 Config Nuar купить", "🎰 Рулетка"],
@@ -60,6 +62,7 @@ def get_admin_inline_kb():
         [InlineKeyboardButton("⬅️ Закрыть админку", callback_data="back_to_main")]
     ])
 
+# --- СТАРТ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     name = update.effective_user.first_name
@@ -67,15 +70,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"🔥 Главное меню NuarDLC\n👤 Игрок: {u['name']} | Баланс: {u['stars']} ⭐"
     await update.message.reply_text(text, reply_markup=get_kb_page1(user_id))
 
+# --- ОБРАБОТЧИК КНОПОК ---
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
     u = get_user(user_id)
 
+    # Админка
     if text == "⚙️ Админ-панель" and user_id == ADMIN_ID:
         await update.message.reply_text("⚙️ *Удобная Админ-панель*", parse_mode="Markdown", reply_markup=get_admin_inline_kb())
         return
 
+    # Пассивный доход
     now = time.time()
     if now - u["last_passive"] >= 3600:
         passive_income = (u["business"] * 5) + (u["mining"] * 2)
@@ -84,32 +90,68 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             u["last_passive"] = now
             await update.message.reply_text(f"💰 Пассивный доход: +{passive_income} ⭐")
 
+    # Меню
     if text == "➡️ Страница 2":
         await update.message.reply_text("📄 Страница 2", reply_markup=get_kb_page2())
     elif text == "⬅️ Страница 1":
         await update.message.reply_text("🔥 Меню", reply_markup=get_kb_page1(user_id))
+    
     elif text == "👤 Профиль":
-        t = f"👤 *Профиль*\n⭐ Баланс: *{u['stars']}*\n💼 Работа: {u['job']}\n🏢 Бизнесов: {u['business']}"
+        t = (f"👤 *Профиль*\n⭐ Баланс: *{u['stars']}*\n💼 Работа: {u['job']}\n"
+             f"🏢 Бизнесов: {u['business']}\n⛏ Ферм: {u['mining']}\n🚗 Машина: {u['car']}")
         await update.message.reply_text(t, parse_mode="Markdown", reply_markup=get_kb_page1(user_id))
+
+    # КАТАЛОГ (ИСПРАВЛЕНО)
+    elif text == "🛒 Config Nuar купить":
+        if not PRODUCTS:
+            await update.message.reply_text("📦 Каталог пуст.", reply_markup=get_kb_page1(user_id))
+            return
+        await update.message.reply_text("🛒 *Доступные конфиги:*", parse_mode="Markdown")
+        for k, v in PRODUCTS.items():
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"💳 Купить за {v['price']} ⭐", callback_data=f"buy_{k}")]])
+            await update.message.reply_text(f"📦 *{v['name']}*\n{v['desc']}", reply_markup=kb, parse_mode="Markdown")
+
+    elif text == "🎰 Рулетка":
+        if now - u["last_roll"] < 3600:
+            await update.message.reply_text("⏳ Жди час.", reply_markup=get_kb_page1(user_id))
+            return
+        u["last_roll"] = now
+        prize = random.choices(["stars", "discount", "nothing"], weights=[50, 30, 20])[0]
+        if prize == "stars":
+            amount = random.randint(5, 20)
+            u["stars"] += amount
+            await update.message.reply_text(f"🎉 Выиграл {amount} ⭐!", reply_markup=get_kb_page1(user_id))
+        elif prize == "discount":
+            discount = random.choice([10, 15, 20])
+            user_promo[user_id] = discount
+            await update.message.reply_text(f"🎉 Скидка {discount}%!", reply_markup=get_kb_page1(user_id))
+        else:
+            await update.message.reply_text("😢 Не повезло.", reply_markup=get_kb_page1(user_id))
+
     elif text == "📦 Кейсы":
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("📦 Кейс (20 ⭐)", callback_data="case_20")]])
         await update.message.reply_text("Выбери кейс:", reply_markup=kb)
+
     elif text == "👷 Работа":
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🛵 Курьер (30 мин)", callback_data="job_courier")]])
         await update.message.reply_text("Выбери работу:", reply_markup=kb)
+
     elif text == "🚗 Автосалон":
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚗 Lada (100 ⭐)", callback_data="car_lada")]])
         await update.message.reply_text("Выбери машину:", reply_markup=kb)
+
     elif text == "🆘 Поддержка":
         support_kb = InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Админ", url=f"tg://user?id={ADMIN_ID}")]])
         await update.message.reply_text("Напиши админу:", reply_markup=support_kb)
+
     elif text == "🎟 Промокод":
         await update.message.reply_text("Введи промокод:")
         context.user_data['state'] = 'awaiting_promo'
+
     else:
         await update.message.reply_text("Неизвестная команда.", reply_markup=get_kb_page1(user_id))
 
-# --- ОБРАБОТЧИК INLINE КНОПОК (АДМИНКА И ПОКУПКИ) ---
+# --- ОБРАБОТЧИК INLINE КНОПОК ---
 async def handle_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -130,6 +172,7 @@ async def handle_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text(f"🎉 Выигрыш: {win} ⭐!", reply_markup=get_back_to_menu_kb(user_id))
         else:
             await query.message.edit_text("❌ Мало звезд.", reply_markup=get_back_to_menu_kb(user_id))
+            
     elif data.startswith("job_"):
         job = data.replace("job_", "")
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Работать", callback_data=f"confirm_job_{job}"), InlineKeyboardButton("❌ Отмена", callback_data="back_to_main")]])
@@ -139,12 +182,15 @@ async def handle_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
         earn = random.randint(10, 20)
         u["stars"] += earn
         await query.message.edit_text(f"👷 Заработал {earn} ⭐!", reply_markup=get_back_to_menu_kb(user_id))
+        
     elif data == "buy_business":
         if u["stars"] >= 100:
             u["stars"] -= 100
             u["business"] += 1
             await query.message.edit_text("🏢 Бизнес куплен!", reply_markup=get_back_to_menu_kb(user_id))
-        else: await query.message.edit_text("❌ Мало звезд.", reply_markup=get_back_to_menu_kb(user_id))
+        else: 
+            await query.message.edit_text("❌ Мало звезд.", reply_markup=get_back_to_menu_kb(user_id))
+            
     elif data == "admin_stats":
         await query.message.edit_text(f"📊 Юзеров: {len(USERS)}\n📦 Конфигов: {len(PRODUCTS)}", reply_markup=get_admin_inline_kb())
     elif data == "admin_add":
@@ -162,9 +208,20 @@ async def handle_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "back_to_main":
         await query.message.delete()
         await query.message.chat.send_message("🔥 Меню", reply_markup=get_kb_page1(user_id))
+        
     elif data.startswith("buy_"):
-        await query.message.edit_text("✅ Конфиг куплен!", reply_markup=get_back_to_menu_kb(user_id))
-        # --- ОБРАБОТКА ТЕКСТА (АДМИНКА И ПРОМО) ---
+        config_key = int(data.replace("buy_", ""))
+        item = PRODUCTS.get(config_key)
+        if item:
+            discount = user_promo.get(user_id, 0)
+            price = int(item['price']) - (int(item['price']) * discount // 100)
+            if u["stars"] >= price:
+                u["stars"] -= price
+                await query.message.edit_text(f"✅ Куплено: {item['name']}\nКлюч: `{item['key']}`\nКод: `{item['text']}`", parse_mode="Markdown", reply_markup=get_back_to_menu_kb(user_id))
+            else:
+                await query.message.edit_text("❌ Мало звезд.", reply_markup=get_back_to_menu_kb(user_id))
+
+# --- ОБРАБОТКА ВВОДА ТЕКСТА ---
 async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     state = context.user_data.get('state')
@@ -180,6 +237,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Ошибка формата.")
         context.user_data['state'] = None
+        
     elif state == 'awaiting_giveaway' and user_id == ADMIN_ID:
         for uid in USERS.keys():
             try:
@@ -188,6 +246,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
         await update.message.reply_text("✅ Раздача завершена!", reply_markup=get_kb_page1(user_id))
         context.user_data['state'] = None
+        
     elif state == 'awaiting_create_promo' and user_id == ADMIN_ID:
         try:
             code, disc = text.split(" ")
@@ -196,12 +255,14 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("❌ Ошибка формата.")
         context.user_data['state'] = None
+        
     elif state == 'awaiting_broadcast' and user_id == ADMIN_ID:
         for uid in USERS.keys():
             try: await context.bot.send_message(uid, f"📢 {text}")
             except: pass
         await update.message.reply_text("✅ Отправлено!", reply_markup=get_kb_page1(user_id))
         context.user_data['state'] = None
+        
     elif state == 'awaiting_promo':
         code = text.upper()
         if code in PROMO_CODES:
@@ -210,12 +271,11 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Неверный промокод.", reply_markup=get_kb_page2())
         context.user_data['state'] = None
+        
     else:
         await handle_menu(update, context)
 
-async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.pre_checkout_query.answer(ok=True)
-
+# --- ЗАПУСК ---
 flask_app = Flask(__name__)
 
 @flask_app.route("/")
@@ -226,7 +286,7 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
     app.add_handler(CallbackQueryHandler(handle_inline))
-    app.add_handler(PreCheckoutQueryHandler(pre_checkout))
+    app.add_handler(PreCheckoutQueryHandler(lambda u, c: u.pre_checkout_query.answer(ok=True)))
     
     await app.initialize()
     await app.start()
